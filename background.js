@@ -1,4 +1,4 @@
-// Per-tab routing state lives in the offscreen document; this worker brokers requests.
+// Brokers requests between the popup and the offscreen audio engine.
 const OFFSCREEN = "offscreen.html";
 
 async function ensureOffscreen() {
@@ -11,49 +11,54 @@ async function ensureOffscreen() {
   });
 }
 
-async function route(tabId, deviceId, volume) {
+// Every call to the offscreen document goes through here so failures are never reported as success.
+async function toOffscreen(msg) {
   await ensureOffscreen();
-  const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
-  return chrome.runtime.sendMessage({ target: "offscreen", type: "route", tabId, deviceId, volume, streamId });
+  const res = await chrome.runtime.sendMessage({ target: "offscreen", ...msg });
+  if (!res) throw new Error("Audio engine did not respond");
+  if (res.ok === false || res.error) throw new Error(res.error || "Audio engine error");
+  return res;
 }
 
-async function update(tabId, deviceId, volume) {
-  await ensureOffscreen();
-  return chrome.runtime.sendMessage({ target: "offscreen", type: "update", tabId, deviceId, volume });
-}
-
-async function stop(tabId) {
-  await ensureOffscreen();
-  return chrome.runtime.sendMessage({ target: "offscreen", type: "stop", tabId });
+async function listRoutes() {
+  const { routes = {} } = await toOffscreen({ type: "list" });
+  return routes;
 }
 
 async function updateBadge() {
-  const { routes = {} } = (await chrome.runtime.sendMessage({ target: "offscreen", type: "list" })) || {};
-  const n = Object.keys(routes).length;
+  const n = Object.keys(await listRoutes()).length;
   await chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
   await chrome.action.setBadgeText({ text: n ? String(n) : "" });
 }
 
-async function stopAll() {
-  await ensureOffscreen();
-  const { routes = {} } = await chrome.runtime.sendMessage({ target: "offscreen", type: "list" });
-  for (const id of Object.keys(routes)) await stop(+id);
-}
+const handlers = {
+  async route({ tabId, deviceId, volume }) {
+    await ensureOffscreen();
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    return toOffscreen({ type: "route", tabId, deviceId, volume, streamId });
+  },
+  update: ({ tabId, deviceId, volume, muted }) => toOffscreen({ type: "update", tabId, deviceId, volume, muted }),
+  stop: ({ tabId }) => toOffscreen({ type: "stop", tabId }),
+  async stopAll() {
+    for (const id of Object.keys(await listRoutes())) await toOffscreen({ type: "stop", tabId: +id });
+    return {};
+  },
+  async list() { return { routes: await listRoutes() }; },
+};
 
-chrome.runtime.onMessage.addListener((msg, _s, send) => {
-  if (msg.target !== "background") return;
-  const run = {
-    route: () => route(msg.tabId, msg.deviceId, msg.volume),
-    update: () => update(msg.tabId, msg.deviceId, msg.volume),
-    stop: () => stop(msg.tabId),
-    stopAll,
-    list: async () => {
-      await ensureOffscreen();
-      return chrome.runtime.sendMessage({ target: "offscreen", type: "list" });
-    },
-  }[msg.type];
-  run().then(async (r) => { if (msg.type !== "list") await updateBadge().catch(() => {}); send({ ok: true, ...(r || {}) }); }, (e) => send({ ok: false, error: String(e.message || e) }));
+chrome.runtime.onMessage.addListener((msg, _sender, send) => {
+  if (msg.target === "background" && msg.type === "badge") { updateBadge().catch(() => {}); return; }
+  if (msg.target !== "background" || !handlers[msg.type]) return;
+  handlers[msg.type](msg)
+    .then(async (r) => { if (msg.type !== "list") await updateBadge().catch(() => {}); send({ ok: true, ...(r || {}) }); })
+    .catch((e) => send({ ok: false, error: String(e.message || e) }));
   return true;
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => stop(tabId).then(updateBadge).catch(() => {}));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  toOffscreen({ type: "stop", tabId }).then(updateBadge).catch(() => {});
+});
+
+// If the browser restarts or the offscreen doc was killed, the badge must not lie.
+chrome.runtime.onStartup.addListener(() => chrome.action.setBadgeText({ text: "" }));
+chrome.runtime.onInstalled.addListener(() => chrome.action.setBadgeText({ text: "" }));

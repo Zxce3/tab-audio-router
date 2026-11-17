@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const send = (m) => chrome.runtime.sendMessage({ target: "background", ...m });
+const send = (m) => chrome.runtime.sendMessage({ target: "background", ...m }).then((r) => r || { ok: false, error: "No response from background worker" }, (e) => ({ ok: false, error: String(e.message || e) }));
 const err = (t) => ($("msg").textContent = t || "");
 const host = (u) => { try { return new URL(u).hostname; } catch { return ""; } };
 const store = {
