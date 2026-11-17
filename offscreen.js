@@ -28,8 +28,12 @@ async function start({ tabId, deviceId, volume, streamId }) {
     ctx = new AudioContext({ sinkId: deviceId || "" });
     const gain = ctx.createGain();
     gain.gain.value = volume ?? 1;
-    ctx.createMediaStreamSource(stream).connect(gain).connect(ctx.destination);
-    routes.set(tabId, { ctx, stream, gain, deviceId, volume: volume ?? 1, muted: false });
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    ctx.createMediaStreamSource(stream).connect(gain);
+    gain.connect(analyser);
+    gain.connect(ctx.destination);
+    routes.set(tabId, { ctx, stream, gain, analyser, buf: new Float32Array(analyser.fftSize), deviceId, volume: volume ?? 1, muted: false, fellBack: false });
     // Capture ended (tab closed / capture revoked): drop the route so state matches reality.
     stream.getAudioTracks()[0].onended = () =>
       serial(tabId, () => teardown(tabId)).then(() => chrome.runtime.sendMessage({ target: "background", type: "badge" }).catch(() => {}));
@@ -47,15 +51,23 @@ async function update({ tabId, deviceId, volume, muted }) {
   if (volume != null) r.volume = volume;
   if (muted != null) r.muted = muted;
   r.gain.gain.value = r.muted ? 0 : r.volume;
-  if (deviceId != null && deviceId !== r.deviceId) { await r.ctx.setSinkId(deviceId); r.deviceId = deviceId; }
+  if (deviceId != null && deviceId !== r.deviceId) { await r.ctx.setSinkId(deviceId); r.deviceId = deviceId; r.fellBack = false; }
 }
 
 const ops = {
   route: (m) => serial(m.tabId, () => start(m)),
   update: (m) => serial(m.tabId, () => update(m)),
   stop: (m) => serial(m.tabId, () => teardown(m.tabId)),
+  levels: async () => ({
+    levels: Object.fromEntries([...routes].map(([id, r]) => {
+      r.analyser.getFloatTimeDomainData(r.buf);
+      let peak = 0;
+      for (const v of r.buf) peak = Math.max(peak, Math.abs(v));
+      return [id, peak];
+    })),
+  }),
   list: async () => ({
-    routes: Object.fromEntries([...routes].map(([id, r]) => [id, { deviceId: r.deviceId, volume: r.volume, muted: r.muted }])),
+    routes: Object.fromEntries([...routes].map(([id, r]) => [id, { deviceId: r.deviceId, volume: r.volume, muted: r.muted, fellBack: r.fellBack }])),
   }),
 };
 
@@ -73,7 +85,7 @@ navigator.mediaDevices.addEventListener("devicechange", async () => {
   const ids = new Set((await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === "audiooutput").map((d) => d.deviceId));
   for (const [tabId, r] of routes) {
     if (r.deviceId && !ids.has(r.deviceId)) {
-      serial(tabId, async () => { await r.ctx.setSinkId("").catch(() => {}); r.deviceId = ""; });
+      serial(tabId, async () => { await r.ctx.setSinkId("").catch(() => {}); r.deviceId = ""; r.fellBack = true; });
     }
   }
 });

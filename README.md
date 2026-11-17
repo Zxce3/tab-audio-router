@@ -11,10 +11,15 @@
 
 🔊 A Chrome (Manifest V3) extension that sends **each tab's audio to a different output device**, so one tab can play on your speakers while another plays on your headphones or Bluetooth device.
 
+<p align="center"><img src="docs/popup.png" alt="Popup UI (sample data)" width="380"></p>
+
 ## ✨ Features
 
 - 🎧 Pick an output device per tab
-- 🔈 Per-tab volume and mute
+- 🔈 Per-tab volume (with %) and mute
+- 📊 Live level meter per routed tab
+- 🔎 Tab search and first-run onboarding
+- ♿ Keyboard focus styles and ARIA labels, light/dark theme
 - 📌 Current tab highlighted and listed first; optional **Show all tabs**
 - 🔢 Toolbar badge shows how many tabs are routed; **Stop all** button
 - 🔌 Falls back to the default output if a routed device is unplugged
@@ -49,7 +54,7 @@ Capturing a tab mutes its normal output, so routed audio plays only on the devic
 | --- | --- |
 | `background.js` | Service worker: brokers requests, manages the offscreen document and badge |
 | `offscreen.js` | Captures tab streams and plays them through the selected sink |
-| `popup.html` / `popup.js` | Per-tab device, volume and mute UI |
+| `popup.html` / `popup.css` / `popup.js` | Per-tab device, volume, mute and level meter UI |
 | `permission.html` / `permission.js` | One-time device-name permission page |
 
 ## ⚠️ Limitations

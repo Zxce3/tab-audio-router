@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tab Audio Router",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Send each tab's audio to a different output device (speakers, headphones, Bluetooth, etc).",
   "minimum_chrome_version": "116",
   "permissions": [
